@@ -123,6 +123,29 @@ def test_captions_avoid_download(tmp_path):
     assert card['source_text'] == '原生文字稿'
 
 
+@pytest.mark.parametrize('transcript_url,same_source', [
+    (XHS.replace('/explore/', '/discovery/item/') + '?xsec_token=shared', True),
+    (XHS[:-1] + 'b', False),
+    (DOUYIN, False),
+])
+def test_xhs_schema_only_transcript_requires_same_source(tmp_path, transcript_url, same_source):
+    html = '<meta property="og:title" content="视频"><script>' + json.dumps({
+        '@context': 'https://schema.org', '@type': 'VideoObject',
+        'url': transcript_url, 'transcript': '与本条视频关联的公开文字稿',
+    }) + '</script>'
+    with patch.object(extract, 'fetch_source', return_value=network.Fetched(XHS, html.encode(), 'text/html')), patch.object(extract, '_transcribe_media') as stt:
+        card = extract.extract_url(SHORT, cache_dir=tmp_path)
+    stt.assert_not_called()
+    if same_source:
+        assert card['content_type'] == 'video'
+        assert card['source_text'] == '与本条视频关联的公开文字稿'
+        assert card['evidence'] == 'partial'
+        assert '未验证是否覆盖' in card['evidence_note']
+    else:
+        assert card['source_text'] == ''
+        assert card['evidence'] == 'metadata'
+
+
 def test_douyin_requested_item_only():
     wrong = {'aweme_id': '88888888', 'video': {'play_addr': {'url_list': ['https://v1.douyinvod.com/wrong.mp4']}}}
     right = {'aweme_id': '123456789', 'video': {'play_addr': {'url_list': ['https://v1.douyinvod.com/right.mp4']}}}

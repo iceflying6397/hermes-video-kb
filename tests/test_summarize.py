@@ -95,7 +95,8 @@ class ProviderTests(unittest.TestCase):
     def test_anthropic_no_tools(self):
         data = {"content": [{"type": "text", "text": "{}"}]}
         runtime = {**self.runtime, "api_mode": "anthropic_messages", "base_url": "https://api.example.test"}
-        with patch.object(providers.http.client, "HTTPSConnection", self.connection(data=data)):
+        with patch.object(providers.http.client, "HTTPSConnection", self.connection(data=data)), \
+                patch.object(providers, "_anthropic_auth", return_value={"x-api-key": "FAKE_SECRET"}):
             providers._request(runtime, [{"role": "system", "content": "policy"}, {"role": "user", "content": "source"}])
         self.assertEqual(self.requests[0][1], "/v1/messages")
         self.assertNotIn("tools", self.requests[0][2])

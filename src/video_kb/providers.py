@@ -207,6 +207,85 @@ def _contains_commands(value):
     return False
 
 
+def _validated_extra_headers(value) -> dict[str, str]:
+    """Credentials may be configured here; validate silently, never log values."""
+    if value is None:
+        return {}
+    if not isinstance(value, dict) or len(value) > 32:
+        raise ProviderUnavailable()
+    blocked = {
+        "host", "content-length", "transfer-encoding", "content-type", "content-encoding",
+        "accept", "accept-encoding", "connection", "upgrade", "expect", "trailer", "te",
+        "keep-alive", "proxy-authorization", "proxy-connection", "forwarded",
+        "x-forwarded-host", "x-forwarded-proto", "x-http-method-override", "anthropic-version",
+    }
+    result = {}
+    total = 0
+    for name, content in value.items():
+        if (not isinstance(name, str) or not re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}", name)
+                or not isinstance(content, str) or len(content) > 4096
+                or re.search(r"[^\x20-\x7e]", content)):
+            raise ProviderUnavailable()
+        key = name.lower()
+        if key in blocked or key in result:
+            raise ProviderUnavailable()
+        total += len(name) + len(content)
+        if total > 16384:
+            raise ProviderUnavailable()
+        result[key] = content
+    if "authorization" in result and "x-api-key" in result:
+        raise ProviderUnavailable()
+    return result
+
+
+def _merge_api_headers(headers, extra):
+    result = {name.lower(): value for name, value in headers.items()}
+    if "authorization" in extra:
+        result.pop("x-api-key", None)
+    if "x-api-key" in extra:
+        result.pop("authorization", None)
+    result.update(extra)
+    return result
+
+
+def _anthropic_adapter():
+    # These pure helpers do not resolve credentials, install SDKs, or launch
+    # Claude Code. Check the same capabilities in preflight and at execution.
+    from agent import anthropic_adapter as adapter
+    for name in ("_auth_style", "_common_betas_for_base_url", "_beta_header"):
+        if not callable(getattr(adapter, name, None)):
+            raise ProviderUnavailable()
+    return adapter
+
+
+def _anthropic_auth(runtime, payload):
+    adapter = _anthropic_adapter()
+    base, token = runtime["base_url"], runtime["api_key"]
+    style = adapter._auth_style(token, base, re.sub(r"/v1/?$", "", base.rstrip("/")))
+    if style not in {"api_key", "bearer", "oauth", "kimi"}:
+        raise ProviderUnavailable()
+    betas = adapter._common_betas_for_base_url(base)
+    if style == "oauth":
+        if (not callable(getattr(adapter, "_apply_claude_code_identity", None))
+                or not isinstance(getattr(adapter, "_OAUTH_ONLY_BETAS", None), list)
+                or not isinstance(getattr(adapter, "_CLAUDE_CODE_VERSION_FALLBACK", None), str)):
+            raise ProviderUnavailable()
+        betas = betas + adapter._OAUTH_ONLY_BETAS
+    headers = {"anthropic-version": "2023-06-01", **adapter._beta_header(betas)}
+    if style in {"bearer", "oauth"}:
+        headers["Authorization"] = "Bearer " + token
+    else:
+        headers["x-api-key"] = token
+    if style == "oauth":
+        # Use the host's own offline default. Never run an external CLI merely
+        # to discover its version or construct a second agent/session.
+        headers.update({"user-agent": f"claude-code/{adapter._CLAUDE_CODE_VERSION_FALLBACK} (external, cli)", "x-app": "cli"})
+        payload["system"] = adapter._apply_claude_code_identity(payload["system"], [], payload["messages"], lambda name: name)
+    elif style == "kimi":
+        headers["user-agent"] = "HermesAgent"
+    return headers
+
+
 def _check_configuration() -> str:
     # Import the actual adapter dependency, but never call its credential resolver.
     from hermes_cli.config import load_config_readonly
@@ -234,6 +313,10 @@ def _check_configuration() -> str:
     if len(entries) > 1 or any(_contains_commands(entry) for entry in entries):
         return "selection"
     entry = entries[0] if entries else {}
+    try:
+        _validated_extra_headers(entry.get("extra_headers"))
+    except ProviderUnavailable:
+        return "configuration"
     pdef = None
     if not entry and provider != "custom":
         from hermes_cli.providers import get_provider
@@ -275,6 +358,8 @@ def _check_configuration() -> str:
         return "ready"
     if mode not in {"chat_completions", "anthropic_messages"}:
         return "mode"
+    if mode == "anthropic_messages":
+        _anthropic_adapter()
     if not base and (entry or provider == "custom"):
         return "configuration"
     return "ready"
@@ -364,6 +449,7 @@ def _runtime():
         raise ProviderUnavailable(_FAILURE_MESSAGES["subscription_route"])
     if not isinstance(runtime.get("api_key"), str):
         raise ProviderUnavailable()
+    _validated_extra_headers(runtime.get("extra_headers"))
     runtime["model"] = model
     return runtime
 
@@ -434,6 +520,7 @@ def _request(runtime, messages):
     if parsed.scheme != "https" and not (parsed.scheme == "http" and loopback):
         raise ProviderUnavailable()
     token = runtime["api_key"]
+    extra_headers = _validated_extra_headers(runtime.get("extra_headers"))
     headers = {"Content-Type": "application/json", "Accept": "application/json", "Accept-Encoding": "identity"}
     mode = runtime["api_mode"]
     if mode == "anthropic_messages":
@@ -441,7 +528,7 @@ def _request(runtime, messages):
         endpoint = base_path + ("/messages" if base_path.endswith("/v1") else "/v1/messages")
         system = "\n\n".join(m["content"] for m in messages if m["role"] == "system")
         payload = {"model": runtime["model"], "system": system, "messages": [m for m in messages if m["role"] != "system"], "max_tokens": 3000}
-        headers.update({"x-api-key": token, "anthropic-version": "2023-06-01"})
+        headers.update(_anthropic_auth(runtime, payload))
     else:
         endpoint = parsed.path.rstrip("/") + "/chat/completions"
         payload = {"model": runtime["model"], "messages": messages, "max_completion_tokens": 3000}
@@ -451,6 +538,7 @@ def _request(runtime, messages):
             payload["max_tokens"] = payload.pop("max_completion_tokens")
         if token:
             headers["Authorization"] = "Bearer " + token
+    headers = _merge_api_headers(headers, extra_headers)
     connection_class = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
     kwargs = {"timeout": 55}
     if parsed.scheme == "https":

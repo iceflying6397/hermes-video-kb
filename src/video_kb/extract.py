@@ -282,18 +282,20 @@ def extract_url(url: str, *, cache_dir: Path, config: dict | None = None) -> dic
             text = _clean(note.get("desc"), 50000)
             if text:
                 card.update(source_text=text, evidence="partial", evidence_note="仅取得视频配文，没有取得视频逐字稿；摘要只针对配文。")
-    if card["content_type"] == "video":
-        transcript = _clean(embedded_transcript(page.scripts, fetched.url), 50001) if source_identity(fetched.url) else ""
-        if transcript:
-            card.update(source_text=transcript[:50000], evidence="partial",
-                        evidence_note="取得页面公开标注的视频文字稿；未验证是否覆盖所有声音，摘要仅基于这份文字稿。" + (" 文字过长已截断。" if len(transcript) > 50000 else ""))
-        elif ref := _media_ref(platform, fetched.url, note):
-            data = _transcribe_media(ref, cache_dir, config, resolver)
-            text = _clean(data["text"], 50001)
-            limited = bool(data.get("truncated")) or bool(data.get("duration_mismatch")) or len(text) > 50000
-            card.update(source_text=text[:50000], evidence="partial" if limited else "asr",
-                        evidence_note=("ASR转写，非官方字幕。来自本条笔记的公开媒体音轨；本机离线识别，未上传音频。"
-                                       f"音轨约 {data['audio_seconds']:.1f} 秒；自动识别可能漏字、误认同音词和专名，未逐字人工校验。"
-                                       + ("音轨与视频时长存在明显差异，可能缺少部分声音，不能称为完整视频原文。" if data.get("duration_mismatch") else "")
-                                       + ("文字超过限制，只保留前 50000 字。" if data.get("truncated") or len(text) > 50000 else "已处理整段可取得音轨；识别结束不代表讲话逐字无误。")))
+    # A same-source VideoObject identifies video evidence independently of the
+    # platform's optional SSR classification. Missing SSR must not hide captions.
+    transcript = (_clean(embedded_transcript(page.scripts, fetched.url), 50001)
+                  if platform in {"douyin", "xiaohongshu"} and source_identity(fetched.url) else "")
+    if transcript:
+        card.update(content_type="video", source_text=transcript[:50000], evidence="partial",
+                    evidence_note="取得页面公开标注的视频文字稿；未验证是否覆盖所有声音，摘要仅基于这份文字稿。" + (" 文字过长已截断。" if len(transcript) > 50000 else ""))
+    elif card["content_type"] == "video" and (ref := _media_ref(platform, fetched.url, note)):
+        data = _transcribe_media(ref, cache_dir, config, resolver)
+        text = _clean(data["text"], 50001)
+        limited = bool(data.get("truncated")) or bool(data.get("duration_mismatch")) or len(text) > 50000
+        card.update(source_text=text[:50000], evidence="partial" if limited else "asr",
+                    evidence_note=("ASR转写，非官方字幕。来自本条笔记的公开媒体音轨；本机离线识别，未上传音频。"
+                                   f"音轨约 {data['audio_seconds']:.1f} 秒；自动识别可能漏字、误认同音词和专名，未逐字人工校验。"
+                                   + ("音轨与视频时长存在明显差异，可能缺少部分声音，不能称为完整视频原文。" if data.get("duration_mismatch") else "")
+                                   + ("文字超过限制，只保留前 50000 字。" if data.get("truncated") or len(text) > 50000 else "已处理整段可取得音轨；识别结束不代表讲话逐字无误。")))
     return card

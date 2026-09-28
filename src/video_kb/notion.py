@@ -25,6 +25,10 @@ class NotionError(ConnectionError):
     pass
 
 
+class NotionAuthorizationError(NotionError):
+    """An explicit HTTP 401, with no remote response body in the message."""
+
+
 class NotionNotSent(NotionError):
     """Validation/read failed before the first mutation request was sent."""
 
@@ -42,6 +46,10 @@ class NotionCompatibilityError(NotionError):
 
 TOOLS = frozenset({"notion-create-database", "notion-create-pages", "notion-fetch"})
 MAX_RESPONSE = 2 * 1024 * 1024
+RECONNECT_MESSAGE = (
+    "Notion 授权已失效。请先让 Hermes“断开 Notion”，再“连接 Notion”，在官方页面重新授权。"
+    "这会保留已有笔记、知识库绑定和待处理队列；重新连接后先核对未完成任务，不重复提交未知结果的保存。"
+)
 TITLE = "视频知识库"
 KEY_PREFIX = "hermes-video-key:"
 SCHEMA_DDL = 'CREATE TABLE ("名称" TITLE, "原始链接" URL, "平台" RICH_TEXT, "内容状态" RICH_TEXT, "去重标记" RICH_TEXT)'
@@ -261,6 +269,9 @@ class _OfficialTransport(httpx.AsyncBaseTransport):
         if str(request.url) != MCP_URL:
             raise NotionError("已阻止向非官方地址发送连接资料。")
         response = await self.transport.handle_async_request(request)
+        if response.status_code == 401:
+            await response.aclose()
+            raise NotionAuthorizationError(RECONNECT_MESSAGE)
         if 300 <= response.status_code < 400:
             await response.aclose()
             raise NotionError("Notion 请求发生重定向，已安全停止。")
@@ -370,7 +381,7 @@ class NotionGateway:
             binding = {"database_url": db, "database_id": object_id(db.rsplit("/", 1)[-1]), "data_source_url": ds, "data_source_id": source_id(ds), "title": TITLE + " · " + marker[:8], "marker": marker, **(self.identity or {})}
             await self.verify_binding(binding)
             return binding
-        except Exception:
+        except (Exception, asyncio.CancelledError):
             raise NotionUncertain("Notion 可能已创建知识库，但还未核实。请先核对，程序不会再建一个。", candidate_url=db) from None
 
     async def verify_binding(self, binding: dict) -> bool:
@@ -431,7 +442,7 @@ class NotionGateway:
             if not await self.verify_saved(url, binding, key, expected_card=card):
                 raise NotionError("保存后核对失败。")
             return {"page_url": url}
-        except Exception:
+        except (Exception, asyncio.CancelledError):
             raise NotionUncertain("Notion 可能已保存内容，但还未核实。请先核对，程序不会重复保存。", candidate_url=url) from None
 
     async def verify_saved(self, page_url: str, binding: dict, key: str, *, expected_card: dict | None = None) -> bool:
@@ -507,13 +518,26 @@ async def notion_session(state_dir: Path, *, interactive=False, open_browser=Fal
         if completed:
             return
         # AnyIO task groups can wrap safe application errors. Never expose raw nested errors.
-        def find_safe(error):
-            if isinstance(error, NotionError):
+        def find_safe(error, kind=NotionError):
+            if isinstance(error, kind):
                 return error
             for item in getattr(error, "exceptions", []):
-                if found := find_safe(item):
+                if found := find_safe(item, kind):
                     return found
             return None
+        # A transport failure and the operation's uncertain result can be sibling
+        # exceptions. Preserve the write outcome before selecting an auth message.
+        uncertain = find_safe(exc, NotionUncertain)
+        authorization = find_safe(exc, NotionAuthorizationError)
+        if uncertain:
+            if authorization:
+                raise NotionUncertain(str(uncertain) + " " + RECONNECT_MESSAGE,
+                                      candidate_url=uncertain.candidate_url) from None
+            raise uncertain from None
+        if authorization:
+            if find_safe(exc, NotionNotSent):
+                raise NotionNotSent(RECONNECT_MESSAGE) from None
+            raise authorization from None
         if found := find_safe(exc):
             raise found from None
         raise NotionError("Notion 连接中断，请稍后检查保存状态。") from None

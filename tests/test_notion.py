@@ -6,7 +6,7 @@ import pytest
 
 from video_kb.notion import (
     NotionGateway, NotionNotSent, NotionUncertain, NotionError, NotionCompatibilityError,
-    _OfficialTransport, _literal, _content, _database, notion_url, MCP_URL,
+    _OfficialTransport, _literal, _content, _database, notion_url, MCP_URL, RECONNECT_MESSAGE,
 )
 
 DB_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
@@ -177,6 +177,111 @@ async def test_transport_rejects_other_origins_before_send():
             await transport.handle_async_request(httpx.Request("POST", MCP_URL + ".attacker.invalid", headers={"Authorization": "Bearer secret"}))
     finally:
         await transport.aclose()
+
+
+@pytest.mark.asyncio
+async def test_transport_closes_401_without_reading_remote_diagnostic():
+    class UnreadStream(httpx.AsyncByteStream):
+        closed = False
+        async def __aiter__(self):
+            raise AssertionError("The remote authentication error body must not be read")
+            yield b""
+        async def aclose(self):
+            self.closed = True
+    stream = UnreadStream()
+    transport = _OfficialTransport()
+    await transport.transport.aclose()
+    transport.transport = httpx.MockTransport(lambda request: httpx.Response(401, stream=stream))
+    try:
+        with pytest.raises(NotionError) as caught:
+            await transport.handle_async_request(httpx.Request("POST", MCP_URL))
+        assert str(caught.value) == RECONNECT_MESSAGE
+        assert stream.closed
+    finally:
+        await transport.aclose()
+
+
+@pytest.mark.parametrize("failure_at", ["initialize", "tools/list"])
+def test_real_mcp_sdk_preserves_401_reconnect_message_to_cli(tmp_path, monkeypatch, capsys, failure_at):
+    from unittest.mock import AsyncMock
+    from video_kb import notion, cli
+    calls = []
+    def respond(request):
+        if request.method == "GET":
+            return httpx.Response(405)
+        body = json.loads(request.content)
+        calls.append(body["method"])
+        if body["method"] == failure_at:
+            return httpx.Response(401, text="private remote authentication diagnostic")
+        if body["method"] == "initialize":
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": body["id"], "result": {
+                "protocolVersion": "2025-03-26", "capabilities": {"tools": {}},
+                "serverInfo": {"name": "synthetic-notion", "version": "1"}}})
+        if body["method"] == "notifications/initialized":
+            return httpx.Response(202)
+        raise AssertionError("No other operation or retry is expected")
+    def initialize_transport(self):
+        self.transport = httpx.MockTransport(respond)
+    token = AsyncMock(return_value="synthetic-access")
+    monkeypatch.setattr(notion, "access_token", token)
+    monkeypatch.setattr(notion, "connection_identity", lambda path: {})
+    monkeypatch.setattr(_OfficialTransport, "__init__", initialize_transport)
+    assert cli.main(["--state-dir", str(tmp_path / "state"), "setup", "--connect"]) == 2
+    output = capsys.readouterr()
+    result = json.loads(output.out.splitlines()[-1])
+    assert result["status"] == "error"
+    assert result["message"] == RECONNECT_MESSAGE
+    assert "private remote" not in output.out + output.err
+    assert calls.count(failure_at) == 1
+    token.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_at", ["notion-create-database", "notion-create-pages", "readback"])
+async def test_real_mcp_sdk_401_during_mutation_stays_uncertain_without_retry(tmp_path, monkeypatch, failure_at):
+    from unittest.mock import AsyncMock
+    from video_kb import notion
+    mutations = []
+    def respond(request):
+        if request.method == "GET":
+            return httpx.Response(405)
+        body = json.loads(request.content)
+        if body["method"] == "notifications/initialized":
+            return httpx.Response(202)
+        if body["method"] == "initialize":
+            response = {"protocolVersion": "2025-03-26", "capabilities": {"tools": {}},
+                        "serverInfo": {"name": "synthetic-notion", "version": "1"}}
+        elif body["method"] == "tools/list":
+            response = {"tools": [{"name": name, "inputSchema": schema} for name, schema in SCHEMAS.items()]}
+        elif body["method"] == "tools/call":
+            name = body["params"]["name"]
+            args = body["params"]["arguments"]
+            if name.startswith("notion-create"):
+                mutations.append(name)
+            if name == failure_at or (failure_at == "readback" and name == "notion-fetch" and args["id"] == PAGE):
+                return httpx.Response(401, text="private remote authentication diagnostic")
+            value = database() if name == "notion-fetch" else {"pages": [{"url": PAGE}]}
+            response = {"content": [{"type": "text", "text": json.dumps(value)}]}
+        else:
+            raise AssertionError("Unexpected SDK operation")
+        return httpx.Response(200, json={"jsonrpc": "2.0", "id": body["id"], "result": response})
+    def initialize_transport(self):
+        self.transport = httpx.MockTransport(respond)
+    token = AsyncMock(return_value="synthetic-access")
+    monkeypatch.setattr(notion, "access_token", token)
+    monkeypatch.setattr(notion, "connection_identity", lambda path: {})
+    monkeypatch.setattr(_OfficialTransport, "__init__", initialize_transport)
+    with pytest.raises(NotionUncertain) as caught:
+        async with notion.notion_session(tmp_path) as gateway:
+            if failure_at == "notion-create-database":
+                await gateway.create_knowledge_base(MARKER)
+            else:
+                await gateway.save_card(CARD, BINDING, KEY)
+    assert RECONNECT_MESSAGE in str(caught.value)
+    assert "private remote" not in str(caught.value)
+    assert caught.value.candidate_url == (PAGE if failure_at == "readback" else None)
+    assert mutations == ["notion-create-database" if failure_at == "notion-create-database" else "notion-create-pages"]
+    token.assert_awaited_once()
 
 
 @pytest.mark.asyncio

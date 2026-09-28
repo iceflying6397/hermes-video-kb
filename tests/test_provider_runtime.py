@@ -98,7 +98,18 @@ def test_preflight_reports_unsupported_configurations(tmp_path, model, reason):
 
 def test_anthropic_provider_uses_only_offline_registry_metadata(tmp_path):
     root, _ = fake_hermes(tmp_path, settings={"model": {"provider": "anthropic", "default": "fake"}})
+    (root / "agent").mkdir()
+    (root / "agent" / "__init__.py").write_text("")
+    (root / "agent" / "anthropic_adapter.py").write_text(
+        "def _auth_style(*a): return 'api_key'\n"
+        "def _common_betas_for_base_url(*a): return []\n"
+        "def _beta_header(*a): return {}\n")
     assert check(root)["available"] is True
+
+
+def test_missing_native_anthropic_helpers_fail_preflight(tmp_path):
+    root, _ = fake_hermes(tmp_path, settings={"model": {"provider": "anthropic", "default": "fake"}})
+    assert check(root)["available"] is False
 
 
 @pytest.mark.parametrize("code", [

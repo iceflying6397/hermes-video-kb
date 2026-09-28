@@ -14,7 +14,7 @@
 
 Hermes 可以从固定提交的源码目录直接安装。压缩包只是可选分发方式，不是用户必做的一步。当前版本带有处理官方授权、任务恢复和受限内容处理的 Python 助手，因此需要完整源码及依赖，不能只复制一个 `SKILL.md`；这些准备由 Hermes 完成。
 
-可选保留的历史候选包：[v2.1.0-rc.1 安装包](https://github.com/iceflying6397/hermes-video-kb/releases/download/v2.1.0-rc.1/hermes-video-kb-2.1.0-rc.1.zip) · [SHA256](https://github.com/iceflying6397/hermes-video-kb/releases/download/v2.1.0-rc.1/hermes-video-kb-2.1.0-rc.1.zip.sha256)。该固定包保留原始内容；当前仓库已修正默认安装入口和模型表述，运行代码没有因这次文案更正而改变。
+保留供追溯的历史候选包：[v2.1.0-rc.1 安装包](https://github.com/iceflying6397/hermes-video-kb/releases/download/v2.1.0-rc.1/hermes-video-kb-2.1.0-rc.1.zip) · [SHA256](https://github.com/iceflying6397/hermes-video-kb/releases/download/v2.1.0-rc.1/hermes-video-kb-2.1.0-rc.1.zip.sha256)。该固定包保持原样，不含仓库后续修复；首次测试请按上面的仓库入口安装当前提交。
 
 首次连接在运行 Hermes 的电脑上确认 Notion 官方授权。有效的本助手绑定会核验并复用；否则建立专用库。日常可直接在当前 Hermes 对话或已配对的飞书私人对话发链接，飞书不是前提。详细安装文字见[这里](prompts/bootstrap-prompt.md)。
 
