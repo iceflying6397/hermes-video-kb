@@ -1,6 +1,6 @@
 # Hermes 视频知识库
 
-已有 Hermes 和 GPT 订阅或其他兼容模型后，把一段安装文字和本版本候选包交给 Hermes；连接 Notion，之后直接发公开视频链接或分享文案。
+已有 Hermes，并已配置可用模型后，把仓库链接和一段安装文字交给 Hermes；连接 Notion，之后直接发公开视频链接或分享文案。沿用现有 API 或订阅，不要求 GPT，也不需要用户手动下载、解压安装包。
 
 **当前为 2.1.0 测试候选版，供用户安装实测；完整真实流程尚未验收通过。** 本轮接回“公开文字稿 → 同条视频媒体 → 本地语音转写”，并接入 Hermes 原生 ChatGPT／Codex 订阅整理。代码接通、兼容预检和隔离测试，不等于真实视频已经转写并存入 Notion。逐项证据见[验收状态](docs/acceptance-status.md)。
 
@@ -10,9 +10,11 @@
 
 在已安装 Hermes、已登录现有模型的电脑上，把下面整段话发给 Hermes：
 
-> 请安装 Hermes 视频知识库 v2.1.0-rc.1 测试候选版。安装包：https://github.com/iceflying6397/hermes-video-kb/releases/download/v2.1.0-rc.1/hermes-video-kb-2.1.0-rc.1.zip 。先读取同一发行版的 SHA256 校验文件，检查压缩包及 RELEASE_MANIFEST.json，并完整阅读包内 prompts/bootstrap-prompt.md，再按其中步骤安装。沿用我已有的 Hermes 和 GPT 订阅或现有模型；检查本地转写条件，集中说明并准备缺少的组件，不让我手工提供字幕作为常规前提。随后带我完成 Notion 官方授权，自动准备专用知识库。不要让我发密钥，不切换另外付费的服务。以后我发视频链接或分享文案时，整理、保存并核验全文；失败就说明具体步骤，不把书签说成完成。
+> 请根据这个仓库安装视频知识库 Skill：https://github.com/iceflying6397/hermes-video-kb 。先确定并记录本次使用的完整提交号，读取该提交的 prompts/bootstrap-prompt.md，取得并校验同一提交的完整源码，再按说明完成安装，不让我手动下载或解压。沿用我在 Hermes 中已配置的模型和登录方式，无论是 API 还是订阅，不限定 GPT；若当前调用方式暂不兼容，说明具体缺项，不擅自切换模型或新增服务。集中检查并准备必要的本地转写组件，不让我手工提供字幕作为常规前提。然后带我完成 Notion 官方授权，自动准备专用知识库。不要让我发送密钥。以后我发视频链接或分享文案时，整理、保存并核验全文；失败就说明具体步骤，不把书签说成完成。
 
-[下载本次安装包](https://github.com/iceflying6397/hermes-video-kb/releases/download/v2.1.0-rc.1/hermes-video-kb-2.1.0-rc.1.zip) · [SHA256 校验文件](https://github.com/iceflying6397/hermes-video-kb/releases/download/v2.1.0-rc.1/hermes-video-kb-2.1.0-rc.1.zip.sha256) · [发行说明](https://github.com/iceflying6397/hermes-video-kb/releases/tag/v2.1.0-rc.1)
+Hermes 可以从固定提交的源码目录直接安装。压缩包只是可选分发方式，不是用户必做的一步。当前版本带有处理官方授权、任务恢复和受限内容处理的 Python 助手，因此需要完整源码及依赖，不能只复制一个 `SKILL.md`；这些准备由 Hermes 完成。
+
+可选保留的历史候选包：[v2.1.0-rc.1 安装包](https://github.com/iceflying6397/hermes-video-kb/releases/download/v2.1.0-rc.1/hermes-video-kb-2.1.0-rc.1.zip) · [SHA256](https://github.com/iceflying6397/hermes-video-kb/releases/download/v2.1.0-rc.1/hermes-video-kb-2.1.0-rc.1.zip.sha256)。该固定包保留原始内容；当前仓库已修正默认安装入口和模型表述，运行代码没有因这次文案更正而改变。
 
 首次连接在运行 Hermes 的电脑上确认 Notion 官方授权。有效的本助手绑定会核验并复用；否则建立专用库。日常可直接在当前 Hermes 对话或已配对的飞书私人对话发链接，飞书不是前提。详细安装文字见[这里](prompts/bootstrap-prompt.md)。
 
@@ -26,7 +28,9 @@
 
 抖音、小红书、微信公众号仍在范围内，但各平台实际能力不同。当前未实现浏览器渲染／资源发现后备、HLS／DASH、登录墙和验证码处理，不能保证所有公开视频可提取。详见[平台范围](docs/supported-platforms.md)。
 
-摘要支持 Chat Completions、Anthropic Messages，以及 Hermes 原生 `openai-codex / codex_responses` 订阅方式；不静默切换付费服务。预检不调用模型接口，真实订阅整理仍以验收记录为准。其他 Responses、`auto` 或外部进程配置未承诺支持。
+摘要按 Hermes 已保存的模型配置，支持 OpenAI Chat Completions 兼容 API、Anthropic Messages 兼容 API，以及 Hermes 原生 `openai-codex / codex_responses` 订阅方式。GPT 订阅是新增恢复的一条兼容路径，不是使用前提；原有 API 仍按用户现有服务使用，不静默换服务。
+
+当前独立适配器的覆盖范围仍比原版直接使用宿主模型窄：通用 Responses、`auto`、聚合／外部进程及部分云厂商原生认证尚未接通，也不继承当前会话的全部动态选模。不能因此要求用户换成 GPT，或声称所有 Hermes 模型已经兼容；预检会说明实际状态，真实调用仍以验收记录为准。
 
 ## 连接与安全
 

@@ -1,5 +1,5 @@
 # 安装提示
 
-使用 [bootstrap-prompt.md](bootstrap-prompt.md)，配上 2.1.0 测试候选版的固定包或解压目录，不附密钥、授权码、Cookie 或完整配置。
+使用 [bootstrap-prompt.md](bootstrap-prompt.md)，配上本仓库链接。Hermes 自行取得固定提交的完整源码并安装；固定候选包或已有源码目录也是可选入口。沿用用户在 Hermes 中配置的 API 或订阅，不限定 GPT。不附密钥、授权码、Cookie 或完整配置。
 
 本版接入公开媒体、本地 ASR 和 Hermes 原生 GPT 订阅摘要，完整真实流程尚未验收通过。安装时应检查实际条件并说明具体缺项；不要沿用旧版“没有 ASR”的断言，也不要因代码已接通就宣布真实视频处理成功。
